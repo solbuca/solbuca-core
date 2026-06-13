@@ -1,0 +1,21 @@
+{
+  "name": "cocktail-platform",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev"
+  },
+  "devDependencies": {
+    "@coral-xyz/anchor": "0.31.1",
+    "@solana/web3.js": "^1.98.4",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.9.3",
+    "chai": "^6.2.2",
+    "mocha": "^11.7.6",
+    "ts-mocha": "^11.1.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.turbo/
+# anchor / solana
+target/
+.anchor/
+**/*.rs.bk
+test-ledger/
+# env / keys
+.env
+.env.*
+*.keypair.json
+# misc
+.DS_Store

@@ -1,0 +1,12 @@
+{
+  "name": "@cocktail/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "scaffold": "echo 'Scaffold from Solana Mobile App Kit into this folder — see README.md'"
+  },
+  "dependencies": {
+    "@cocktail/sdk": "workspace:*",
+    "@cocktail/config": "workspace:*"
+  }
+}
