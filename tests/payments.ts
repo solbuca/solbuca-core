@@ -91,3 +91,129 @@ describe("payments + loyalty CPI (2b)", () => {
     }
   });
 });
+
+// Негативные тесты на защиты payments (риски 1, 3, 4-bis).
+describe("payments — negative (constraints)", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const payments = anchor.workspace.payments as Program;
+  const loyalty = anchor.workspace.loyalty as Program;
+  const membership = anchor.workspace.membership as Program;
+
+  const payer = (provider.wallet as anchor.Wallet).payer;
+  const barAuth = Keypair.generate();
+  const attacker = Keypair.generate();
+
+  let mintA: PublicKey, mintB: PublicKey;
+  let payerAtaA: PublicKey, barAtaA: PublicKey;
+  let attackerAtaA: PublicKey, payerAtaB: PublicKey;
+  let barPda: PublicKey, loyaltyPda: PublicKey, paymentsAuthority: PublicKey;
+
+  before(async () => {
+    for (const kp of [barAuth, attacker]) {
+      const s = await provider.connection.requestAirdrop(kp.publicKey, 2e9);
+      await provider.connection.confirmTransaction(s);
+    }
+
+    [barPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bar"), barAuth.publicKey.toBuffer()], membership.programId);
+    await membership.methods.registerBar("Neg Bar", true)
+      .accounts({ bar: barPda, authority: barAuth.publicKey, systemProgram: SystemProgram.programId })
+      .signers([barAuth]).rpc();
+
+    [loyaltyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("loyalty"), payer.publicKey.toBuffer(), barPda.toBuffer()], loyalty.programId);
+    await loyalty.methods.initialize()
+      .accounts({ loyalty: loyaltyPda, user: payer.publicKey, bar: barPda, systemProgram: SystemProgram.programId })
+      .rpc();
+
+    [paymentsAuthority] = PublicKey.findProgramAddressSync(
+      [Buffer.from("authority")], payments.programId);
+
+    // Два разных минта.
+    mintA = await createMint(provider.connection, payer, payer.publicKey, null, 6);
+    mintB = await createMint(provider.connection, payer, payer.publicKey, null, 6);
+
+    payerAtaA = (await getOrCreateAssociatedTokenAccount(provider.connection, payer, mintA, payer.publicKey)).address;
+    barAtaA   = (await getOrCreateAssociatedTokenAccount(provider.connection, payer, mintA, barAuth.publicKey)).address;
+    attackerAtaA = (await getOrCreateAssociatedTokenAccount(provider.connection, payer, mintA, attacker.publicKey)).address;
+    payerAtaB = (await getOrCreateAssociatedTokenAccount(provider.connection, payer, mintB, payer.publicKey)).address;
+
+    await mintTo(provider.connection, payer, mintA, payerAtaA, payer, 1_000_000_000);
+    await mintTo(provider.connection, payer, mintB, payerAtaB, payer, 1_000_000_000);
+  });
+
+  // РИСК 1: bar_ata принадлежит не бару, а атакующему -> BadBarAta.
+  it("NEGATIVE: bar_ata принадлежит атакующему -> падает (BadBarAta)", async () => {
+    const reference = Keypair.generate().publicKey;
+    const [settlementPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("settlement"), reference.toBuffer()], payments.programId);
+    try {
+      await payments.methods.payAndRecord(reference, new anchor.BN(50_000_000))
+        .accounts({
+          settlement: settlementPda, payer: payer.publicKey, bar: barAuth.publicKey,
+          payerAta: payerAtaA, barAta: attackerAtaA, // <- ATA атакующего вместо бара
+          loyalty: loyaltyPda, paymentsAuthority,
+          loyaltyProgram: loyalty.programId, tokenProgram: TOKEN_PROGRAM, systemProgram: SystemProgram.programId,
+        }).rpc();
+      assert.fail("оплата на чужой ATA должна была упасть");
+    } catch (e: any) {
+      assert.match(e.toString(), /BadBarAta|constraint|owner/i);
+    }
+  });
+
+  // РИСК 3: payer_ata и bar_ata в разных минтах -> MintMismatch.
+  it("NEGATIVE: разные минты payer/bar -> падает (MintMismatch)", async () => {
+    const reference = Keypair.generate().publicKey;
+    const [settlementPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("settlement"), reference.toBuffer()], payments.programId);
+
+    // bar_ata в mintB, чтобы отличался от payer_ata (mintB) — но payer платит с mintA
+    const barAtaB = (await getOrCreateAssociatedTokenAccount(provider.connection, payer, mintB, barAuth.publicKey)).address;
+    try {
+      await payments.methods.payAndRecord(reference, new anchor.BN(50_000_000))
+        .accounts({
+          settlement: settlementPda, payer: payer.publicKey, bar: barAuth.publicKey,
+          payerAta: payerAtaA, barAta: barAtaB, // payer в mintA, bar в mintB
+          loyalty: loyaltyPda, paymentsAuthority,
+          loyaltyProgram: loyalty.programId, tokenProgram: TOKEN_PROGRAM, systemProgram: SystemProgram.programId,
+        }).rpc();
+      assert.fail("разные минты должны были упасть");
+    } catch (e: any) {
+      assert.match(e.toString(), /MintMismatch|constraint|mint/i);
+    }
+  });
+
+  // РИСК 4-bis: подмена loyalty на чужой PDA -> CPI в loyalty не сойдётся по seeds.
+  it("NEGATIVE: чужой loyalty-PDA -> падает (seeds на стороне loyalty)", async () => {
+    // loyalty для другого бара (attacker как authority)
+    const [attackerBarPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bar"), attacker.publicKey.toBuffer()], membership.programId);
+    await membership.methods.registerBar("Attacker Bar", true)
+      .accounts({ bar: attackerBarPda, authority: attacker.publicKey, systemProgram: SystemProgram.programId })
+      .signers([attacker]).rpc();
+    const [foreignLoyalty] = PublicKey.findProgramAddressSync(
+      [Buffer.from("loyalty"), payer.publicKey.toBuffer(), attackerBarPda.toBuffer()], loyalty.programId);
+    await loyalty.methods.initialize()
+      .accounts({ loyalty: foreignLoyalty, user: payer.publicKey, bar: attackerBarPda, systemProgram: SystemProgram.programId })
+      .rpc();
+
+    const reference = Keypair.generate().publicKey;
+    const [settlementPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("settlement"), reference.toBuffer()], payments.programId);
+    try {
+      // платим бару barPda, но подсовываем loyalty другого бара
+      await payments.methods.payAndRecord(reference, new anchor.BN(50_000_000))
+        .accounts({
+          settlement: settlementPda, payer: payer.publicKey, bar: barAuth.publicKey,
+          payerAta: payerAtaA, barAta: barAtaA,
+          loyalty: foreignLoyalty, // <- чужой loyalty
+          paymentsAuthority,
+          loyaltyProgram: loyalty.programId, tokenProgram: TOKEN_PROGRAM, systemProgram: SystemProgram.programId,
+        }).rpc();
+      assert.fail("чужой loyalty должен был упасть");
+    } catch (e: any) {
+      assert.match(e.toString(), /seeds|ConstraintSeeds|loyalty|constraint/i);
+    }
+  });
+});
