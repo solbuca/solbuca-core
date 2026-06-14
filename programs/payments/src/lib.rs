@@ -1,10 +1,15 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use loyalty::cpi::accounts::EarnViaPayment;
+use loyalty::program::Loyalty as LoyaltyProgram;
+use loyalty::{self, Loyalty as LoyaltyAccount};
 
 declare_id!("9XkouJjbZGywjF7b1k1bSTUdu4R2pNWDeL7ztXPQak5q");
 
-/// Records a Solana Pay settlement at a bar AND moves the USDC atomically.
-/// Points are awarded in step 2b (CPI to loyalty) — not yet here.
+/// Points per 1 USDC (USDC has 6 decimals). Placeholder rate — make configurable later.
+pub const POINTS_PER_USDC: u64 = 1;
+const USDC_DECIMALS_FACTOR: u64 = 1_000_000;
+
 #[program]
 pub mod payments {
     use super::*;
@@ -12,7 +17,7 @@ pub mod payments {
     pub fn pay_and_record(ctx: Context<PayAndRecord>, reference: Pubkey, amount: u64) -> Result<()> {
         require!(amount > 0, PaymentError::ZeroAmount);
 
-        // 1. Перевод USDC: гость -> бар. Если упадёт — вся транзакция откатится.
+        // 1. Перевод USDC: гость -> бар (атомарно; упадёт -> всё откатится).
         let cpi = CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             Transfer {
@@ -23,7 +28,7 @@ pub mod payments {
         );
         token::transfer(cpi, amount)?;
 
-        // 2. Зафиксировать факт расчёта.
+        // 2. Зафиксировать расчёт.
         let s = &mut ctx.accounts.settlement;
         s.payer = ctx.accounts.payer.key();
         s.bar = ctx.accounts.bar.key();
@@ -31,6 +36,24 @@ pub mod payments {
         s.amount = amount;
         s.ts = Clock::get()?.unix_timestamp;
         emit!(Settled { payer: s.payer, bar: s.bar, amount, reference });
+
+        // 3. Начислить баллы через CPI в loyalty, подписав authority-PDA программы payments.
+        let points = (amount / USDC_DECIMALS_FACTOR).saturating_mul(POINTS_PER_USDC);
+        if points > 0 {
+            let bump = ctx.bumps.payments_authority;
+            let seeds: &[&[u8]] = &[b"authority", &[bump]];
+            let signer: &[&[&[u8]]] = &[seeds];
+
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.loyalty_program.to_account_info(),
+                EarnViaPayment {
+                    loyalty: ctx.accounts.loyalty.to_account_info(),
+                    payments_authority: ctx.accounts.payments_authority.to_account_info(),
+                },
+                signer,
+            );
+            loyalty::cpi::earn_via_payment(cpi_ctx, points)?;
+        }
         Ok(())
     }
 }
@@ -70,10 +93,9 @@ pub struct PayAndRecord<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: bar identity; used as record field. ATA ownership checked below.
+    /// CHECK: bar identity; used as record field + loyalty PDA seed.
     pub bar: UncheckedAccount<'info>,
 
-    // Токен-аккаунт гостя: должен принадлежать payer и быть в нужном минте.
     #[account(
         mut,
         constraint = payer_ata.owner == payer.key() @ PaymentError::BadPayerAta,
@@ -81,13 +103,24 @@ pub struct PayAndRecord<'info> {
     )]
     pub payer_ata: Account<'info, TokenAccount>,
 
-    // Токен-аккаунт бара: должен принадлежать bar (риск 1 — нельзя платить себе).
     #[account(
         mut,
         constraint = bar_ata.owner == bar.key() @ PaymentError::BadBarAta
     )]
     pub bar_ata: Account<'info, TokenAccount>,
 
+    // Loyalty PDA для (payer, bar) — выводится теми же seeds, что в программе loyalty.
+    // Подменить на чужой нельзя: Anchor проверяет вывод PDA в loyalty по owner.
+    /// CHECK: validated by the loyalty program via its own seeds on CPI.
+    #[account(mut)]
+    pub loyalty: UncheckedAccount<'info>,
+
+    // PDA-подпись payments для авторизации начисления в loyalty.
+    /// CHECK: PDA signer for the loyalty CPI; derived from "authority".
+    #[account(seeds = [b"authority"], bump)]
+    pub payments_authority: UncheckedAccount<'info>,
+
+    pub loyalty_program: Program<'info, LoyaltyProgram>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }

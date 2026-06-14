@@ -3,6 +3,10 @@ use membership::Bar;
 
 declare_id!("ECegX1btskZDKbtXprf9ZrqFwETpqQr62Zh1iTCZhd8Z");
 
+/// Trusted payments program ID — only its "authority" PDA may call earn_via_payment.
+/// TODO: update this if the payments program is redeployed with a new key.
+pub const PAYMENTS_PROGRAM_ID: Pubkey = pubkey!("9XkouJjbZGywjF7b1k1bSTUdu4R2pNWDeL7ztXPQak5q");
+
 /// Loyalty points as non-transferable PDA balances (per user + bar).
 /// NOT an SPL token in MVP — avoids securities exposure. Tokenization is phase 3.
 #[program]
@@ -30,6 +34,15 @@ pub mod loyalty {
         let acct = &mut ctx.accounts.loyalty;
         require!(acct.points >= amount, LoyaltyError::Insufficient);
         acct.points = acct.points.checked_sub(amount).ok_or(LoyaltyError::Overflow)?;
+        Ok(())
+    }
+
+    /// Award points via the payments program (CPI). Authorized ONLY by the payments
+    /// "authority" PDA. Responsibility for "correct bar/user" lives in payments,
+    /// which derives the loyalty PDA from the real payer+bar of the settlement.
+    pub fn earn_via_payment(ctx: Context<EarnViaPayment>, amount: u64) -> Result<()> {
+        let acct = &mut ctx.accounts.loyalty;
+        acct.points = acct.points.checked_add(amount).ok_or(LoyaltyError::Overflow)?;
         Ok(())
     }
 }
@@ -71,8 +84,6 @@ pub struct Mutate<'info> {
         has_one = bar @ LoyaltyError::WrongBar
     )]
     pub loyalty: Account<'info, Loyalty>,
-
-    // Bar account owned by the membership program; Anchor checks owner + PDA.
     #[account(
         seeds = [b"bar", bar.authority.as_ref()],
         bump = bar.bump,
@@ -80,9 +91,26 @@ pub struct Mutate<'info> {
         has_one = authority @ LoyaltyError::Unauthorized
     )]
     pub bar: Account<'info, Bar>,
-
-    // Must be the bar's authority, and must sign.
     pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct EarnViaPayment<'info> {
+    #[account(
+        mut,
+        seeds = [b"loyalty", loyalty.user.as_ref(), loyalty.bar.as_ref()],
+        bump = loyalty.bump
+    )]
+    pub loyalty: Account<'info, Loyalty>,
+
+    /// Signer MUST be the payments program's "authority" PDA.
+    /// Only the payments program can sign for this PDA.
+    #[account(
+        seeds = [b"authority"],
+        bump,
+        seeds::program = PAYMENTS_PROGRAM_ID
+    )]
+    pub payments_authority: Signer<'info>,
 }
 
 #[error_code]
