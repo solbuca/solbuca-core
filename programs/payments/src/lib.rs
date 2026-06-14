@@ -2,13 +2,20 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use loyalty::cpi::accounts::EarnViaPayment;
 use loyalty::program::Loyalty as LoyaltyProgram;
-use loyalty::{self, Loyalty as LoyaltyAccount};
+use loyalty;
 
 declare_id!("9XkouJjbZGywjF7b1k1bSTUdu4R2pNWDeL7ztXPQak5q");
 
-/// Points per 1 USDC (USDC has 6 decimals). Placeholder rate — make configurable later.
+/// 1 point per 1 whole USDC (USDC has 6 decimals). Integer division: fractional USDC earns no points
+/// (e.g. 1.99 USDC -> 1 point). Make configurable later if a different rate is needed.
 pub const POINTS_PER_USDC: u64 = 1;
 const USDC_DECIMALS_FACTOR: u64 = 1_000_000;
+
+/// TODO(mainnet): enforce that the payment mint is the real USDC mint.
+/// On localnet/devnet we use a mock mint, so this check is NOT enabled yet.
+/// Mainnet USDC mint: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+/// When ready, add a constraint: payer_ata.mint == USDC_MINT @ PaymentError::NotUsdc
+pub const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
 #[program]
 pub mod payments {
