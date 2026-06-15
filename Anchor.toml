@@ -14,8 +14,14 @@ tournament = "51XxAr16XmsU8foURdo664JDD1q67MsVTN3JjfWiP2Ja"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[programs.devnet]
+loyalty = "ECegX1btskZDKbtXprf9ZrqFwETpqQr62Zh1iTCZhd8Z"
+membership = "9nDXZ8Stgpr9J8NsfwP8wLSnExG4iGTJuCCVXKhF5SbP"
+payments = "9XkouJjbZGywjF7b1k1bSTUdu4R2pNWDeL7ztXPQak5q"
+tournament = "51XxAr16XmsU8foURdo664JDD1q67MsVTN3JjfWiP2Ja"

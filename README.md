@@ -15,7 +15,7 @@ Security-first, built and tested incrementally. **Early development.**
 **Early development — not production-ready.**
 
 - The core "pay → earn" engine works and is covered by tests.
-- Everything runs on a local validator (localnet). **Not yet deployed to devnet or mainnet.**
+- The four core programs are **deployed and live on Solana devnet** (addresses below).
 - Loyalty points are intentionally **not** a token (see Security & Design notes).
 - The mobile app, social layer, competitions, and venue onboarding are **not built yet** —
   see Roadmap.
@@ -24,6 +24,19 @@ This is honest proof-of-work, not a finished product.
 
 ---
 
+## On-chain deployment (devnet)
+
+The four programs are live on Solana **devnet**. Verify any address in a Solana
+explorer using `?cluster=devnet`.
+
+| Program      | Program ID                                     |
+|--------------|------------------------------------------------|
+| `payments`   | `9XkouJjbZGywjF7b1k1bSTUdu4R2pNWDeL7ztXPQak5q` |
+| `loyalty`    | `ECegX1btskZDKbtXprf9ZrqFwETpqQr62Zh1iTCZhd8Z` |
+| `membership` | `9nDXZ8Stgpr9J8NsfwP8wLSnExG4iGTJuCCVXKhF5SbP` |
+| `tournament` | `51XxAr16XmsU8foURdo664JDD1q67MsVTN3JjfWiP2Ja` |
+
+_Devnet deployment for testing; not yet on mainnet._
 ## What works (proven by tests)
 
 13 passing tests, including negative tests that prove each protection by attacking it:
